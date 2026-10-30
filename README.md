@@ -13,7 +13,7 @@ Consume el backend Spring Boot ([proxy-backend](https://github.com/juangallardo8
 | Al alcanzar el rate limit: botón de envío deshabilitado y countdown | `Chat.jsx` + `App.jsx` (usa el header `Retry-After` del 429) |
 | Al agotar la cuota mensual: modal de upgrade con pago simulado | `src/components/UpgradeModal.jsx` (se abre con el 402) |
 | Historial de uso en gráfica de barras (últimos 7 días) | `src/components/UsageChart.jsx` |
-| Badge del plan actual con colores diferenciados | `src/components/PlanBadge.jsx` (FREE gris, PRO morado, ENTERPRISE dorado) |
+| Badge del plan actual con colores diferenciados | `src/components/PlanBadge.jsx` (Free gris, Pro azul cobalto, Enterprise azul marino con dorado) |
 | Estimador de tokens antes de enviar | `Chat.jsx` (≈ caracteres / 4, la misma regla del backend) |
 
 Además:
