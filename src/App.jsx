@@ -3,8 +3,8 @@ import { api, API_URL } from './api.js'
 import { getOrCreateUserId, saveUserId } from './utils.js'
 import { useNow } from './hooks/useNow.js'
 import PlanBadge from './components/PlanBadge.jsx'
-import QuotaCard from './components/QuotaCard.jsx'
-import RateLimitCard from './components/RateLimitCard.jsx'
+import QuotaGauge from './components/QuotaGauge.jsx'
+import RateSlots from './components/RateSlots.jsx'
 import UsageChart from './components/UsageChart.jsx'
 import Chat from './components/Chat.jsx'
 import UpgradeModal from './components/UpgradeModal.jsx'
@@ -104,7 +104,8 @@ export default function App() {
     if (!quotaExhausted) quotaModalShown.current = false
   }, [quotaExhausted])
 
-  const addSystem = (kind, text) => setMessages((ms) => [...ms, { id: newId(), role: 'system', kind, text }])
+  const addSystem = (kind, text, trace) =>
+    setMessages((ms) => [...ms, { id: newId(), role: 'system', kind, text, trace }])
 
   async function send(prompt) {
     const pendingId = newId()
@@ -142,13 +143,20 @@ export default function App() {
       if (e.status === 429) {
         const secs = e.retryAfter || 60
         setBlockedUntil(Date.now() + secs * 1000)
-        addSystem('rate', `429 · Superaste el límite de requests por minuto. Espera ${secs} s para volver a enviar.`)
+        addSystem(
+          'rate',
+          `El proxy de rate limit detuvo el mensaje (429): ya usaste las requests de este minuto. Podrás enviar de nuevo en ${secs} s.`,
+          { rate: 'fail' }
+        )
       } else if (e.status === 402) {
-        addSystem('quota', '402 · Agotaste la cuota mensual de tokens de tu plan.')
+        addSystem('quota', 'El proxy de cuota detuvo el mensaje (402): no te quedan tokens este mes.', {
+          rate: 'pass',
+          quota: 'fail',
+        })
         quotaModalShown.current = true
         setModal({ open: true, reason: 'quota' })
       } else {
-        addSystem('error', e.message)
+        addSystem('error', e.message, null)
       }
       refreshStatus()
       return false
@@ -162,7 +170,7 @@ export default function App() {
     applyStatus(res.status)
     setBlockedUntil(null)
     refreshHistory()
-    addSystem('success', `Plan mejorado de ${res.previousPlan} a ${res.newPlan}. Transacción ${res.transactionId}.`)
+    addSystem('success', `Cambiaste al plan ${res.newPlan.charAt(0) + res.newPlan.slice(1).toLowerCase()}. Tus nuevos límites ya están activos.`, null)
     return res
   }
 
@@ -177,33 +185,40 @@ export default function App() {
   }
 
   const canUpgrade = status && status.plan !== 'ENTERPRISE'
+  const closeModal = useCallback(() => setModal((m) => ({ ...m, open: false })), [])
 
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="logo" aria-hidden="true">
-            P
-          </span>
+          <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="9" />
+            <path d="M8 21a8 8 0 0 1 16 0" className="bm-track" />
+            <path d="M8 21a8 8 0 0 1 11.2-7.3" className="bm-fill" />
+            <circle cx="16" cy="21" r="2.2" className="bm-dot" />
+          </svg>
           <div>
             <h1>Proxy IA</h1>
-            <p>Rate limiting y cuotas por plan</p>
+            <p>Consumo de IA con límites por plan</p>
           </div>
         </div>
 
         <div className="topbar-right">
           {editingUser ? (
             <form className="user-form" onSubmit={saveUser}>
+              <label className="sr-only" htmlFor="user-input">
+                Nombre de usuario
+              </label>
               <input
+                id="user-input"
                 value={userDraft}
                 onChange={(e) => setUserDraft(e.target.value)}
-                aria-label="Nombre de usuario"
                 autoFocus
                 maxLength={64}
               />
-              <button className="btn btn-small btn-primary">Usar</button>
-              <button type="button" className="btn btn-small btn-ghost" onClick={() => setEditingUser(false)}>
-                ×
+              <button className="btn btn-small btn-primary">Cambiar</button>
+              <button type="button" className="btn btn-small btn-quiet" onClick={() => setEditingUser(false)}>
+                Cancelar
               </button>
             </form>
           ) : (
@@ -218,12 +233,12 @@ export default function App() {
               <span className="avatar" aria-hidden="true">
                 {userId.slice(0, 1).toUpperCase()}
               </span>
-              {userId}
+              <span className="user-name">{userId}</span>
             </button>
           )}
           <PlanBadge plan={status?.plan} />
           {canUpgrade && (
-            <button className="btn btn-small btn-accent" onClick={() => setModal({ open: true, reason: 'manual' })}>
+            <button className="btn btn-small btn-upgrade" onClick={() => setModal({ open: true, reason: 'manual' })}>
               Mejorar plan
             </button>
           )}
@@ -232,42 +247,49 @@ export default function App() {
 
       {connError && (
         <div className="banner" role="alert">
-          {connError} <span className="muted">({API_URL})</span>
-          <button className="link" onClick={refreshStatus}>
+          <span>
+            {connError} <span className="banner-url">({API_URL})</span>
+          </span>
+          <button className="btn btn-small btn-quiet" onClick={refreshStatus}>
             Reintentar
           </button>
         </div>
       )}
 
       <main className="layout">
-        <Chat
-          messages={messages}
-          onSend={send}
-          sending={sending}
-          rateLimited={rateLimited}
-          blockedSeconds={blockedSeconds}
-          quotaExhausted={quotaExhausted}
-          status={status}
-          onUpgrade={() => setModal({ open: true, reason: 'quota' })}
-        />
-
-        <aside className="sidebar">
-          <QuotaCard status={status} />
-          <RateLimitCard
+        <div className="area-meter">
+          <QuotaGauge status={status} />
+        </div>
+        <div className="area-slots">
+          <RateSlots
             status={status}
             secondsToReset={secondsToReset}
             rateLimited={rateLimited}
             blockedSeconds={blockedSeconds}
           />
+        </div>
+        <div className="area-chat">
+          <Chat
+            messages={messages}
+            onSend={send}
+            sending={sending}
+            rateLimited={rateLimited}
+            blockedSeconds={blockedSeconds}
+            quotaExhausted={quotaExhausted}
+            status={status}
+            onUpgrade={() => setModal({ open: true, reason: 'quota' })}
+          />
+        </div>
+        <div className="area-history">
           <UsageChart history={history} />
-        </aside>
+        </div>
       </main>
 
       <UpgradeModal
         open={modal.open}
         reason={modal.reason}
         currentPlan={status?.plan}
-        onClose={() => setModal((m) => ({ ...m, open: false }))}
+        onClose={closeModal}
         onUpgrade={upgrade}
       />
     </div>

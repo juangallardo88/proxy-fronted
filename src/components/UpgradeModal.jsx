@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import PlanBadge from './PlanBadge.jsx'
 import { PLANS, fmt } from '../utils.js'
 
 const ORDER = ['FREE', 'PRO', 'ENTERPRISE']
 const TEST_CARD = '4242 4242 4242 4242'
+
+const rpmText = (p) => (PLANS[p].rpm ? `${PLANS[p].rpm} por minuto` : 'Sin límite')
+const tokenText = (p) => (PLANS[p].tokens ? `${fmt(PLANS[p].tokens)} al mes` : 'Sin límite')
 
 export default function UpgradeModal({ open, reason, currentPlan, onClose, onUpgrade }) {
   const [step, setStep] = useState('plans') // plans | payment | processing | done
@@ -11,8 +14,10 @@ export default function UpgradeModal({ open, reason, currentPlan, onClose, onUpg
   const [form, setForm] = useState({ name: '', card: TEST_CARD, exp: '12/30', cvc: '123' })
   const [error, setError] = useState('')
   const [receipt, setReceipt] = useState(null)
+  const dialogRef = useRef(null)
 
-  const options = ORDER.slice(ORDER.indexOf(currentPlan || 'FREE') + 1)
+  const current = currentPlan || 'FREE'
+  const options = ORDER.slice(ORDER.indexOf(current) + 1)
 
   useEffect(() => {
     if (open) {
@@ -31,6 +36,10 @@ export default function UpgradeModal({ open, reason, currentPlan, onClose, onUpg
     return () => window.removeEventListener('keydown', onKey)
   }, [open, step, onClose])
 
+  useEffect(() => {
+    if (open) dialogRef.current?.focus()
+  }, [open, step])
+
   if (!open) return null
 
   const digits = form.card.replace(/\D/g, '')
@@ -39,11 +48,10 @@ export default function UpgradeModal({ open, reason, currentPlan, onClose, onUpg
   const validCvc = /^\d{3,4}$/.test(form.cvc)
   const validName = form.name.trim().length >= 3
   const canPay = validCard && validExp && validCvc && validName
+  const processing = step === 'processing'
 
   function update(field, value) {
-    if (field === 'card') {
-      value = value.replace(/\D/g, '').slice(0, 16).replace(/(\d{4})(?=\d)/g, '$1 ')
-    }
+    if (field === 'card') value = value.replace(/\D/g, '').slice(0, 16).replace(/(\d{4})(?=\d)/g, '$1 ')
     if (field === 'exp') {
       value = value.replace(/\D/g, '').slice(0, 4)
       if (value.length > 2) value = value.slice(0, 2) + '/' + value.slice(2)
@@ -57,62 +65,77 @@ export default function UpgradeModal({ open, reason, currentPlan, onClose, onUpg
     if (!canPay) return
     setError('')
     setStep('processing')
-    // Simula el tiempo de la pasarela de pago
-    await new Promise((r) => setTimeout(r, 1500))
+    await new Promise((r) => setTimeout(r, 1500)) // tiempo de la pasarela simulada
     try {
       const res = await onUpgrade(target, digits.slice(-4))
       setReceipt(res)
       setStep('done')
     } catch (err) {
-      setError(err.message || 'No se pudo completar el pago')
+      setError(err.message || 'El pago no se pudo completar. Intenta de nuevo.')
       setStep('payment')
     }
   }
 
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && step !== 'processing' && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="upgrade-title">
-        {step !== 'processing' && (
+    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && !processing && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="upgrade-title" tabIndex={-1} ref={dialogRef}>
+        {!processing && (
           <button className="modal-close" onClick={onClose} aria-label="Cerrar">
-            ×
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
           </button>
         )}
 
         {step === 'plans' && (
           <>
-            <h2 id="upgrade-title">{reason === 'quota' ? 'Agotaste tu cuota mensual' : 'Mejora tu plan'}</h2>
-            <p className="muted">
-              {reason === 'quota'
-                ? 'Tu plan actual no tiene más tokens este mes. Mejora tu plan para seguir usando el servicio.'
-                : 'Elige un plan con más requests por minuto y más tokens al mes.'}
-            </p>
+            <div className="modal-head">
+              <h2 id="upgrade-title">{reason === 'quota' ? 'Te quedaste sin tokens este mes' : 'Mejora tu plan'}</h2>
+              <p className="muted">
+                {reason === 'quota'
+                  ? `Tu plan ${PLANS[current].name} ya usó todos sus tokens. Con un plan mayor puedes seguir hoy mismo.`
+                  : 'Más requests por minuto y más tokens al mes. El cambio se aplica al instante.'}
+              </p>
+            </div>
+
             {options.length === 0 ? (
-              <p>Ya tienes el plan más alto.</p>
+              <p>Ya tienes el plan más alto disponible.</p>
             ) : (
-              <div className="plans">
+              <div className="plans" role="radiogroup" aria-label="Planes disponibles">
                 {options.map((p) => (
                   <button
                     key={p}
                     type="button"
-                    className={`plan ${target === p ? 'plan-selected' : ''}`}
+                    role="radio"
+                    aria-checked={target === p}
+                    className={`plan plan-${p.toLowerCase()} ${target === p ? 'plan-selected' : ''}`}
                     onClick={() => setTarget(p)}
-                    aria-pressed={target === p}
                   >
-                    <PlanBadge plan={p} />
-                    <div className="plan-price">
+                    <span className="plan-top">
+                      <PlanBadge plan={p} />
+                      <span className="plan-radio" aria-hidden="true" />
+                    </span>
+                    <span className="plan-price">
                       US$ {PLANS[p].price}
-                      <span>/mes</span>
-                    </div>
-                    <ul>
-                      <li>{PLANS[p].rpm ? `${PLANS[p].rpm} requests por minuto` : 'Requests ilimitadas'}</li>
-                      <li>{PLANS[p].tokens ? `${fmt(PLANS[p].tokens)} tokens al mes` : 'Tokens ilimitados'}</li>
-                    </ul>
+                      <small> al mes</small>
+                    </span>
+                    <span className="plan-compare">
+                      <span>Requests</span>
+                      <span className="from">{rpmText(current)}</span>
+                      <span className="to">{rpmText(p)}</span>
+                    </span>
+                    <span className="plan-compare">
+                      <span>Tokens</span>
+                      <span className="from">{tokenText(current)}</span>
+                      <span className="to">{tokenText(p)}</span>
+                    </span>
                   </button>
                 ))}
               </div>
             )}
+
             <div className="modal-actions">
-              <button className="btn btn-ghost" onClick={onClose}>
+              <button className="btn btn-quiet" onClick={onClose}>
                 Ahora no
               </button>
               {options.length > 0 && (
@@ -124,17 +147,20 @@ export default function UpgradeModal({ open, reason, currentPlan, onClose, onUpg
           </>
         )}
 
-        {(step === 'payment' || step === 'processing') && (
+        {(step === 'payment' || processing) && (
           <form onSubmit={pay}>
-            <h2 id="upgrade-title">Pago simulado</h2>
-            <p className="sim-note">
-              Simulación: no se hace ningún cobro. Usa la tarjeta de prueba, no ingreses datos reales.
-            </p>
-            <div className="summary">
-              <span>
-                Plan <PlanBadge plan={target} size="sm" />
+            <div className="modal-head">
+              <h2 id="upgrade-title">Pagar el plan {PLANS[target].name}</h2>
+              <p className="sim-note">Es un pago simulado: no se cobra nada. Usa la tarjeta de prueba que ya está escrita.</p>
+            </div>
+
+            <div className="card-preview" aria-hidden="true">
+              <span className="card-chip" />
+              <span className="card-number">{form.card || '•••• •••• •••• ••••'}</span>
+              <span className="card-row">
+                <span>{form.name || 'Nombre en la tarjeta'}</span>
+                <span>{form.exp || 'MM/AA'}</span>
               </span>
-              <strong>US$ {PLANS[target].price}/mes</strong>
             </div>
 
             <label className="field">
@@ -142,9 +168,9 @@ export default function UpgradeModal({ open, reason, currentPlan, onClose, onUpg
               <input
                 value={form.name}
                 onChange={(e) => update('name', e.target.value)}
-                placeholder="Nombre Apellido"
-                autoFocus
-                disabled={step === 'processing'}
+                placeholder="Como aparece en la tarjeta"
+                autoComplete="off"
+                disabled={processing}
               />
             </label>
             <label className="field">
@@ -153,13 +179,14 @@ export default function UpgradeModal({ open, reason, currentPlan, onClose, onUpg
                 value={form.card}
                 onChange={(e) => update('card', e.target.value)}
                 inputMode="numeric"
-                disabled={step === 'processing'}
+                autoComplete="off"
+                disabled={processing}
               />
             </label>
             <div className="field-row">
               <label className="field">
-                <span>Vence (MM/AA)</span>
-                <input value={form.exp} onChange={(e) => update('exp', e.target.value)} disabled={step === 'processing'} />
+                <span>Vence</span>
+                <input value={form.exp} onChange={(e) => update('exp', e.target.value)} placeholder="MM/AA" disabled={processing} />
               </label>
               <label className="field">
                 <span>CVC</span>
@@ -167,21 +194,22 @@ export default function UpgradeModal({ open, reason, currentPlan, onClose, onUpg
                   value={form.cvc}
                   onChange={(e) => update('cvc', e.target.value)}
                   inputMode="numeric"
-                  disabled={step === 'processing'}
+                  autoComplete="off"
+                  disabled={processing}
                 />
               </label>
             </div>
 
-            {error && <p className="error-text">{error}</p>}
+            {error && <p className="error-text" role="alert">{error}</p>}
 
             <div className="modal-actions">
-              <button type="button" className="btn btn-ghost" onClick={() => setStep('plans')} disabled={step === 'processing'}>
-                Atrás
+              <button type="button" className="btn btn-quiet" onClick={() => setStep('plans')} disabled={processing}>
+                Volver
               </button>
-              <button type="submit" className="btn btn-primary" disabled={!canPay || step === 'processing'}>
-                {step === 'processing' ? (
+              <button type="submit" className="btn btn-primary" disabled={!canPay || processing}>
+                {processing ? (
                   <>
-                    <span className="spinner" aria-hidden="true" /> Procesando pago…
+                    <span className="spinner" aria-hidden="true" /> Procesando pago
                   </>
                 ) : (
                   `Pagar US$ ${PLANS[target].price}`
@@ -193,10 +221,13 @@ export default function UpgradeModal({ open, reason, currentPlan, onClose, onUpg
 
         {step === 'done' && receipt && (
           <div className="done">
-            <div className="done-icon" aria-hidden="true">✓</div>
-            <h2 id="upgrade-title">¡Pago aprobado!</h2>
-            <p>
-              Ahora tienes el plan <PlanBadge plan={receipt.newPlan} size="sm" />
+            <svg className="done-mark" viewBox="0 0 52 52" aria-hidden="true">
+              <circle cx="26" cy="26" r="24" />
+              <path d="M15 27l7 7 15-15" />
+            </svg>
+            <h2 id="upgrade-title">Pago aprobado</h2>
+            <p className="muted">
+              Ya tienes el plan <PlanBadge plan={receipt.newPlan} size="sm" /> y tus nuevos límites están activos.
             </p>
             <dl className="receipt">
               <div>
@@ -204,21 +235,21 @@ export default function UpgradeModal({ open, reason, currentPlan, onClose, onUpg
                 <dd>{receipt.transactionId}</dd>
               </div>
               <div>
-                <dt>Plan anterior</dt>
-                <dd>{receipt.previousPlan}</dd>
+                <dt>Cambio</dt>
+                <dd>
+                  {PLANS[receipt.previousPlan]?.name || receipt.previousPlan} a {PLANS[receipt.newPlan]?.name || receipt.newPlan}
+                </dd>
               </div>
               {receipt.cardLast4 && (
                 <div>
                   <dt>Tarjeta</dt>
-                  <dd>•••• {receipt.cardLast4}</dd>
+                  <dd>Terminada en {receipt.cardLast4}</dd>
                 </div>
               )}
             </dl>
-            <div className="modal-actions">
-              <button className="btn btn-primary" onClick={onClose} autoFocus>
-                Seguir chateando
-              </button>
-            </div>
+            <button className="btn btn-primary btn-wide" onClick={onClose}>
+              Volver al chat
+            </button>
           </div>
         )}
       </div>

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { AVERAGE_COMPLETION_TOKENS, estimateTokens, fmt, formatCountdown } from '../utils.js'
+import { ProxyDiagram, ProxyTrace } from './ProxyChain.jsx'
 
 const SUGERENCIAS = [
   '¿Qué es el patrón Proxy?',
-  'Explícame qué significa un error 429',
+  '¿Qué significa un error 429?',
   '¿Para qué sirve la carga diferida?',
 ]
 
@@ -14,7 +15,7 @@ export default function Chat({ messages, onSend, sending, rateLimited, blockedSe
 
   useEffect(() => {
     const el = listRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el && messages.length > 0) el.scrollTop = el.scrollHeight
   }, [messages])
 
   const promptTokens = estimateTokens(text)
@@ -25,9 +26,9 @@ export default function Chat({ messages, onSend, sending, rateLimited, blockedSe
   const disabled = sending || rateLimited || quotaExhausted || !text.trim()
 
   let buttonLabel = 'Enviar'
-  if (sending) buttonLabel = 'Generando…'
+  if (sending) buttonLabel = 'Generando'
   else if (rateLimited) buttonLabel = `Espera ${formatCountdown(blockedSeconds)}`
-  else if (quotaExhausted) buttonLabel = 'Cuota agotada'
+  else if (quotaExhausted) buttonLabel = 'Sin tokens'
 
   async function submit(e) {
     e?.preventDefault()
@@ -45,19 +46,20 @@ export default function Chat({ messages, onSend, sending, rateLimited, blockedSe
   }
 
   return (
-    <section className="chat">
+    <section className="chat" aria-label="Chat con el servicio de IA">
       <div className="messages" ref={listRef} aria-live="polite">
         {messages.length === 0 ? (
-          <div className="empty">
-            <div className="empty-icon" aria-hidden="true">✦</div>
-            <h2>Pregúntale algo al servicio de IA</h2>
+          <div className="intro">
+            <h2>Cada mensaje pasa por dos controles antes de llegar a la IA</h2>
             <p className="muted">
-              Cada mensaje pasa por el proxy de <b>rate limiting</b> y luego por el de <b>cuotas</b> antes de llegar
-              al servicio de generación.
+              Primero se revisa cuántas requests llevas en este minuto y después cuántos tokens te quedan en el mes.
+              Si alguno no alcanza, el mensaje se detiene ahí.
             </p>
+            <ProxyDiagram status={status} />
             <div className="chips">
+              <span className="muted small">Prueba con:</span>
               {SUGERENCIAS.map((s) => (
-                <button key={s} type="button" className="chip" onClick={() => setText(s)}>
+                <button key={s} type="button" className="chip" onClick={() => { setText(s); inputRef.current?.focus() }}>
                   {s}
                 </button>
               ))}
@@ -68,36 +70,41 @@ export default function Chat({ messages, onSend, sending, rateLimited, blockedSe
         )}
       </div>
 
-      <form className="composer" onSubmit={submit}>
-        <textarea
-          ref={inputRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={quotaExhausted ? 'Agotaste tu cuota. Mejora tu plan para seguir.' : 'Escribe tu prompt… (Enter para enviar)'}
-          rows={2}
-          maxLength={4000}
-          aria-label="Prompt"
-        />
-        <div className="composer-bar">
-          <div className={`estimator ${exceeds ? 'estimator-warn' : ''}`} aria-live="polite">
-            {promptTokens > 0 ? (
-              <>
-                <span className="estimator-total">≈ {fmt(totalEstimate)} tokens</span>
-                <span className="muted">
-                  {' '}
-                  ({fmt(promptTokens)} del prompt + ~{AVERAGE_COMPLETION_TOKENS} de respuesta)
-                </span>
-                {exceeds && <span className="warn-text"> · supera tus tokens disponibles</span>}
-              </>
-            ) : (
-              <span className="muted">Escribe para ver cuántos tokens consumirá</span>
-            )}
-          </div>
-          <button type="submit" className={`btn btn-primary ${rateLimited ? 'btn-blocked' : ''}`} disabled={disabled}>
+      <form className={`composer ${rateLimited ? 'is-blocked' : ''}`} onSubmit={submit}>
+        <div className="composer-box">
+          <textarea
+            ref={inputRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder={quotaExhausted ? 'Te quedaste sin tokens este mes. Mejora tu plan para seguir.' : 'Escribe tu prompt'}
+            rows={2}
+            maxLength={4000}
+            aria-label="Prompt"
+            aria-describedby="estimator"
+          />
+          <button type="submit" className={`send ${rateLimited ? 'send-blocked' : ''}`} disabled={disabled}>
+            {sending && <span className="spinner" aria-hidden="true" />}
             {buttonLabel}
           </button>
         </div>
+        <p id="estimator" className={`estimator ${exceeds ? 'estimator-warn' : ''}`} aria-live="polite">
+          {promptTokens > 0 ? (
+            exceeds ? (
+              <>
+                Este mensaje usará unos <strong>{fmt(totalEstimate)} tokens</strong> y solo te quedan{' '}
+                {fmt(status.tokensRemaining)}.
+              </>
+            ) : (
+              <>
+                Este mensaje usará unos <strong>{fmt(totalEstimate)} tokens</strong>: {fmt(promptTokens)} del prompt y cerca
+                de {AVERAGE_COMPLETION_TOKENS} de la respuesta.
+              </>
+            )
+          ) : (
+            <>Enter para enviar, Shift + Enter para un salto de línea.</>
+          )}
+        </p>
       </form>
     </section>
   )
@@ -115,24 +122,38 @@ function Message({ m, onUpgrade }) {
       </div>
     )
   }
+
   if (m.role === 'system') {
     return (
-      <div className={`notice notice-${m.kind}`}>
-        <span>{m.text}</span>
+      <div className={`notice notice-${m.kind}`} role={m.kind === 'success' ? 'status' : 'alert'}>
+        {m.trace && <ProxyTrace trace={m.trace} />}
+        <p>{m.text}</p>
         {m.kind === 'quota' && (
-          <button type="button" className="link" onClick={onUpgrade}>
+          <button type="button" className="notice-action" onClick={onUpgrade}>
             Mejorar plan
           </button>
         )}
       </div>
     )
   }
+
+  if (m.role === 'user') {
+    return (
+      <div className="msg msg-user">
+        <div className="bubble">{m.text}</div>
+      </div>
+    )
+  }
+
   return (
-    <div className={`msg msg-${m.role === 'user' ? 'user' : 'ai'}`}>
+    <div className="msg msg-ai">
       <div className="bubble">{m.text}</div>
       {m.meta && (
-        <div className="meta">
-          {fmt(m.meta.totalTokens)} tokens · {(m.meta.latencyMs / 1000).toFixed(1)} s
+        <div className="msg-foot">
+          <ProxyTrace trace={{ rate: 'pass', quota: 'pass', ai: 'pass' }} />
+          <span className="msg-meta">
+            {fmt(m.meta.totalTokens)} tokens en {(m.meta.latencyMs / 1000).toFixed(1).replace('.', ',')} s
+          </span>
         </div>
       )}
     </div>

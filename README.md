@@ -8,8 +8,8 @@ Consume el backend Spring Boot ([proxy-backend](https://github.com/juangallardo8
 | Requerimiento | Dónde |
 |---|---|
 | Interfaz tipo chat para enviar prompts | `src/components/Chat.jsx` |
-| Barra de progreso de tokens usados vs disponibles, actualizada después de cada request | `src/components/QuotaCard.jsx` |
-| Contador de requests por minuto con cuenta regresiva hasta el reset | `src/components/RateLimitCard.jsx` |
+| Indicador de tokens usados vs disponibles, actualizado después de cada request | `src/components/QuotaGauge.jsx` (medidor de arco) |
+| Contador de requests por minuto con cuenta regresiva hasta el reset | `src/components/RateSlots.jsx` (una ranura por request y temporizador circular) |
 | Al alcanzar el rate limit: botón de envío deshabilitado y countdown | `Chat.jsx` + `App.jsx` (usa el header `Retry-After` del 429) |
 | Al agotar la cuota mensual: modal de upgrade con pago simulado | `src/components/UpgradeModal.jsx` (se abre con el 402) |
 | Historial de uso en gráfica de barras (últimos 7 días) | `src/components/UsageChart.jsx` |
@@ -17,6 +17,7 @@ Consume el backend Spring Boot ([proxy-backend](https://github.com/juangallardo8
 | Estimador de tokens antes de enviar | `Chat.jsx` (≈ caracteres / 4, la misma regla del backend) |
 
 Además:
+- Cada respuesta muestra su recorrido por la cadena de proxies (Rate limit, Cuota, IA). Si un proxy la detiene, se marca en rojo el paso que la bloqueó con su código (429 o 402). Ver `src/components/ProxyChain.jsx`.
 - El estado de cuota se consulta cada 10 s y al terminar cada countdown, para mostrarlo en tiempo real.
 - Cada usuario se identifica con el header `X-User-Id`. Se genera uno automáticamente y se puede cambiar desde la barra superior para probar varios usuarios.
 - Si el backend no responde, aparece un aviso con botón para reintentar.
@@ -31,8 +32,9 @@ src/
 ├── hooks/useNow.js       reloj para los countdowns
 ├── components/
 │   ├── Chat.jsx
-│   ├── QuotaCard.jsx
-│   ├── RateLimitCard.jsx
+│   ├── ProxyChain.jsx
+│   ├── QuotaGauge.jsx
+│   ├── RateSlots.jsx
 │   ├── UsageChart.jsx
 │   ├── PlanBadge.jsx
 │   └── UpgradeModal.jsx
